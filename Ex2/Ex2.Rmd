@@ -1,0 +1,141 @@
+---
+title: "Exercise 2"
+author: "Alexander Linus Grübling"
+date: "`r Sys.Date()`"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+```{r loadData, results='hide'}
+load("building.RData")
+head(df)
+str(df)
+```
+
+```{r splitData}
+set.seed(12122371)
+train_indices <- sample(1:nrow(df), size = floor(nrow(df) / 4))
+
+train_data <- df[train_indices, ]
+test_data <- df[-train_indices, ]
+
+cat("Training data rows:", nrow(train_data), "\n")
+cat("Test data rows:", nrow(test_data), "\n")
+
+```
+
+## 1) Computing the full model
+
+```{r computeFullModel}
+full_model <- lm(y~., data = train_data)
+```
+
+### 1a) Plotting Diagnostics
+
+```{r}
+fitted_values <- predict(full_model, train_data)
+plot(train_data$y, fitted_values, main = "Fitted vs. Response",
+     xlab = "Actual", ylab = "Fitted")
+abline(0, 1, col = "red")
+
+train_rmse <- sqrt(mean((train_data$y - fitted_values)^2))
+print(train_rmse)
+```
+As we can see, the model already does a pretty good job in predicting the response. This is also visible by the comparatively low reported RMSE.
+
+### 1b) Cross Validation
+
+```{r cvModelEvaluation, warning=FALSE}
+if (!require("cvTools", character.only = TRUE)) {
+    install.packages("cvTools")
+}
+library(cvTools)
+cv_results <- cvFit(full_model, data = train_data, y = train_data$y, 
+                    cost = rmspe, K = 5, R = 100)
+plot(cv_results, main = "5-fold CV with RMSE")
+
+```
+We can see, that the errors are on average pretty low. However, it is clearly visible that a number of outliers heavily influences the prediction performance.
+
+### 1c) Cross Validation with different cost function
+
+```{r, warning=FALSE}
+cv_results_rtmspe <- cvFit(full_model, data = train_data, y = train_data$y, 
+                           cost = rtmspe, K = 5, R = 100)
+plot(cv_results_rtmspe, main = "5-fold CV with rtmspe")
+
+```
+By using the RTMSE instead of the RMSE, we are trimming out the outliers, and therefore get a much more even distribution of the errors.
+
+### 1d) Predicting the Test Data
+
+```{r}
+test_predictions <- predict(full_model, test_data)
+plot(test_data$y, test_predictions, main = "Predicted vs. Response",
+     xlab = "Actual", ylab = "Predicted")
+abline(0, 1, col = "red")
+
+test_rmse <- sqrt(mean((test_data$y - test_predictions)^2))
+print(test_rmse)
+
+```
+We can clearly see in this plot, that our model is predicting some values very far from their ideal values.
+
+## 2) Best Subset Regression
+
+### 2a) A simple way of reducing predictors
+```{r}
+library(dplyr)
+correlation_matrix <- sapply(df, function(x) cor(x, df$y, use = "complete.obs"))
+correlation_df <- data.frame(variable = names(correlation_matrix), 
+                             correlation = as.numeric(correlation_matrix))
+
+top_predictors <- correlation_df %>%
+  dplyr::arrange(desc(abs(correlation))) %>%
+  dplyr::slice(2:51) %>%  
+  dplyr::pull(variable)
+
+df_shortened <- df[, top_predictors]
+df_shortened <- cbind(y = df$y, df_shortened)
+
+df_full <- data.frame(response_variable = df_shortened$y, df_shortened)
+
+models <- reg_fit <- leaps::regsubsets(y ~ ., data = df_full, nbest = 1, really.big = TRUE)
+summary(reg_fit)
+```
+To cut down our predictor variables to just 50, I have computed the correlations each of the variables have with the response variable. Then I just used the 50 highest scoring variables to compute the best subset regression.
+
+### 2b) Plotting the resulting object
+```{r}
+plot(models)
+```
+This plot shows the variables that best performed in the best subset regression.
+
+### 2c) Computing the final linear model
+```{r}
+final_model <- lm(
+  y ~ PhysFin8 + COMPLETION.YEAR + Econ14.lag3 + Econ14.lag1 + Econ14 + Econ15.lag1 + Econ3.lag3, 
+  data = train_data
+  )
+cv_results_final_model <- cvFit(final_model, data = train_data, y = train_data$y, 
+                           cost = rtmspe, K = 5, R = 100)
+plot(cv_results)
+```
+Even though we used the RTMSE, our model still produces some heavy outliers.
+
+### Predicting the response values
+```{r}
+test_predictions_final <- predict(final_model, test_data)
+plot(test_data$y, test_predictions, main = "Predicted vs. Response",
+     xlab = "Actual", ylab = "Predicted")
+abline(0, 1, col = "red")
+
+test_rmse_final <- sqrt(mean((test_data$y - test_predictions_final)^2))
+print(test_rmse_final)
+```
+As we can see here, we have obtained a much higher RMSE score, indicating that the model is performing worse than the original one.

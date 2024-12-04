@@ -1,0 +1,197 @@
+---
+title: "Exercise 1"
+subtitle: "Advanced Methods for Regression and Classification"
+author: "Alexander Linus Grübling"
+date: "17.10.2024"
+toc: true
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Preprocessing of the Data
+
+```{r}
+data(College, package="ISLR")
+str(College)
+anyNA(College)
+
+College <- subset(College, select = -c(Accept, Enroll))
+
+hist(College$Apps)
+College$Apps <- log(College$Apps)
+hist(College$Apps)
+```
+As we can see by plotting a histogram of the $Apps$ variable, it is heavily skewed, and thus violates the key assumption of normality of the response variable. To mitigate this, we will continue with a log-transform of this variable. Furthermore, the dataset does not contain any missing values, and therefore we do not need to omit any rows.
+
+```{r}
+train_indices <- sample(1:nrow(College), size = floor(2/3 * nrow(College)))
+
+train_set <- College[train_indices, ]
+test_set <- College[-train_indices, ]
+```
+After preprocessing, we split the data by a 2/3 to 1/3 ration into a training and a test set.
+
+## Full model
+
+```{r}
+full_model <- lm(train_set$Apps~., data = train_set)
+summary(full_model)
+plot(full_model)
+```
+
+As the output of the summary() call tells us, about 72% of the variance is explained by the model. It is mostly influenced by the variables PrivateYes, F.Undergrad, Outstate, S.F.Ration, perc.alumni, and Expend.
+
+Plots:
+
+* Residuals vs Fitted: This plot should ideally show a random spread of residuals around zero, which follows from our assumption that the residuals should be i.i.d. with $N(0, \sigma^2)$. As we can see, our model largely follows this criteria, but for larger fitted values, it tends to also produce larger residuals.
+
+* QQ-Plot: The quantile-quantile plot shows a straight diagonal line, with no heavy tails, which is ideal.
+
+* Scale-Location Plot: This plot should ideally show a random i.i.d. scatter of the residuals. As with the residuals vs fitted plot, we can see that this assumption on is met for lower fitted values, but the model tends to produce larger residuals for larger fitted values, which could be an indicator for some heteroscedasticity.
+
+* Residuals vs Leverage Plot: As we can see, there is one point on the far right of the x-axis. This point seems to be a leverage point and as such influences the model heavily. Points with high y-values are badly predicted by the model and could be outliers.
+
+### Manually computing the Least Squares coefficients
+
+```{r}
+X_matrix <- model.matrix(train_set$Apps~., data = train_set)
+ls_estimator <- solve(t(X_matrix) %*% X_matrix) %*% t(X_matrix) %*% train_set$Apps
+
+print(ls_estimator - full_model$coefficients)
+```
+As we can see here, the differences between the LS-estimators calculted by hand and the ones resulting from lm() are very small, indicating that we received approximately the same result.
+
+### Graphic comparison
+```{r}
+predicted_train <- X_matrix %*% ls_estimator
+
+X_matrix_test <- model.matrix(Apps~., data = test_set)
+predicted_test <- X_matrix_test %*% ls_estimator
+
+plot(train_set$Apps, predicted_train, 
+     main = "Observed vs Predicted Values (Training Data)", 
+     xlab = "Observed Values", 
+     ylab = "Predicted Values",
+     col = "blue", pch = 19)
+abline(0, 1, col = "red")
+
+plot(test_set$Apps, predicted_test, 
+     main = "Observed vs Predicted Values (Test Data)", 
+     xlab = "Observed Values", 
+     ylab = "Predicted Values",
+     col = "blue", pch = 19)
+abline(0, 1, col = "red")
+```
+It seems as though the model generalizes well, as not only the points closely cluster around the red line (predicted = observed) in the training data plot, but also in the test data plot. Generally, there seems to be a small trend that shapes the predicted vs. observed plot a bit in a U-shape, but the model seems accurate enough.
+
+### Computing RMSE
+
+```{r}
+train_residuals <- train_set$Apps - predicted_train
+test_residuals <- test_set$Apps - predicted_test
+
+train_rmse <- sqrt(mean(train_residuals^2))
+test_rmse <- sqrt(mean(test_residuals^2))
+
+train_rmse
+test_rmse
+```
+Both the RMSE of the train and the test set are very similar, and as such it seems that the model generalizes well. The model seems to perform well for both the train as well as the test data.
+
+## Reduced Model
+
+```{r}
+reduced_model <- lm(
+  train_set$Apps~.-Top10perc-Top25perc-P.Undergrad-Personal-Terminal, data = train_set
+  )
+summary(reduced_model)
+```
+With this model, where we removed all variables that were found to be insignificant in 2b), we see that about 72% of the variance is explained, which more or less is equal to the model above. Furthermore, all of the variables seem to be significant in this model. This however cannot be expected in general, as this model is now trained separately, and as such the underlying structure of the model is different from the previous model. The underlying factors such as estimated coefficients and fitted values are completely different from the original model.
+
+### Visualising the fit and predictions
+```{r}
+predicted_train_reduced <- predict(reduced_model)
+predicted_test_reduced <- predict(reduced_model, newdata = test_set)
+
+plot(train_set$Apps, predicted_train_reduced, 
+     main = "Observed vs Predicted Values (Training Data)", 
+     xlab = "Observed Values", 
+     ylab = "Predicted Values",
+     col = "blue", pch = 19)
+abline(0, 1, col = "red")
+
+plot(test_set$Apps, predicted_test_reduced, 
+     main = "Observed vs Predicted Values (Test Data)", 
+     xlab = "Observed Values", 
+     ylab = "Predicted Values",
+     col = "blue", pch = 19)
+abline(0, 1, col = "red")
+```
+
+As we can see, the data points again cluster very tightly along the red line, which is a good sign. However, if the models results are better than those of the full model is quite hard to tell from visualizations only.
+
+### Computing the RMSE
+```{r}
+reduced_rmse <- sqrt(mean(reduced_model$residuals^2))
+reduced_rmse
+```
+
+The RMSE of the reduced model seems very similar to that of the full model. This is quite ideal, as we can now predict with a similar accuracy as with the full model, but with fewer variables.
+
+### Comparing the models with ANOVA
+```{r}
+anova(reduced_model, full_model)
+```
+The ANOVA call results in a p-value of 0.1445, which is larger than the conventional threshold of 0.005. As such, the reduced model is not significantly worse than the full model, and we can explain the data in a similar fashion with fewer variables.
+
+## Stepwise Variable Selection
+```{r, results='hide'}
+null_model <- lm(Apps~1, data=train_set)
+forward_model <- step(null_model, 
+                      scope = list(lower = null_model, upper = full_model), 
+                      direction = "forward")
+backward_model <- step(full_model, direction = "backward")
+```
+
+```{r}
+summary(forward_model)
+summary(backward_model)
+
+pred_train_forward <- predict(forward_model, newdata = train_set)
+pred_test_forward <- predict(forward_model, newdata = test_set)
+
+rmse_train_forward <- sqrt(mean((train_set$Apps - pred_train_forward)^2))
+rmse_test_forward <- sqrt(mean((test_set$Apps - pred_test_forward)^2))
+
+pred_train_backward <- predict(backward_model, newdata = train_set)
+pred_test_backward <- predict(backward_model, newdata = test_set)
+
+rmse_train_backward <- sqrt(mean((train_set$Apps - pred_train_backward)^2))
+rmse_test_backward <- sqrt(mean((test_set$Apps - pred_test_backward)^2))
+
+rmse_train_forward
+rmse_test_forward
+rmse_train_backward
+rmse_test_backward
+```
+Each of these RMSE values seem very similar to one another, and all of them are pretty low, even a bit lower. Both of the models selected eleven variables, but interestingly enough, they selected different ones.
+
+```{r}
+plot(test_set$Apps, pred_test_forward, 
+     main = "Observed vs Predicted Values (Forward Model)", 
+     xlab = "Observed Values", 
+     ylab = "Predicted Values",
+     col = "blue", pch = 19)
+abline(0, 1, col = "red")
+
+plot(test_set$Apps, pred_test_backward, 
+     main = "Observed vs Predicted Values (Backward Model)", 
+     xlab = "Observed Values", 
+     ylab = "Predicted Values",
+     col = "blue", pch = 19)
+abline(0, 1, col = "red")
+```
+Again, the data points cluster nicely along the red line. The model seems to work well for the test data and not overfit too much.

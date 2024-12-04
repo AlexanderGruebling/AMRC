@@ -1,0 +1,154 @@
+---
+title: "Exercise 4"
+subtitle: "Advanced Methods for Regression and Classification"
+author: "Alexander Linus Grübling"
+date: "`r Sys.Date()`"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+if (!require("glmnet")) {
+  install.packages("glmnet")
+}
+library(glmnet)
+```
+
+Use the data set “building.RData” from the last exercise, the same training/test split,
+and the RMSE as an evaluation measure.
+
+```{r}
+set.seed(12122371)
+load("building.RData")
+
+train_indices <- sample(1:nrow(df), size = floor(nrow(df) / 4))
+
+train_data <- df[train_indices, ]
+test_data <- df[-train_indices, ]
+```
+
+## Task 1: Ridge Regression
+
+1. Use the function glmnet() from the library(glmnet) with the parameter alpha=0 and apply it to the training data – see also course notes. Plot the result object. How can you interpret the plot? Which default parameters are used for lambda? What is the meaning of the parameter alpha?
+
+```{r}
+ridge <- glmnet(as.matrix(train_data[, -1]), train_data$y, alpha = 0)
+plot(ridge, xvar = "lambda")
+```
+
+The plot shows the behavior of the different coefficients for an increasing lambda. On the very left, the solution of a simple LS regression is given. We can see that for increasing values of lambda, the coefficients are shrunk to zero. As we have not defined the parameter lambda, its default value is used. This is dependent on the nlambda parameter and is computed by comparing the sample number of observations versus the sample number of variables. The alpha parameter determines the penalty, with alpha = 1 being the default as "Lasso" and alpha = 0 "Ridge".
+
+---
+
+2. Use the function cv.glmnet() and apply it to the training data. Visualize and interpret the results. How do you obtain the optimal tuning parameter and the regression coefficients?
+
+```{r}
+ridge.cv <- cv.glmnet(as.matrix(train_data[,-1]),train_data$y,alpha=0)
+plot(ridge.cv)
+```
+
+This plot shows different values of lambda, with the dashed lines indicating the smallest found MSE +- one standard deviation. The optimal lambda can be found on the right of this plot, with this showing the largest possible lambda value whilst still achieving an error lower than the MSE plus one standard deviation.
+The coefficients for an optimal lambda are given by:
+```{r}
+coef(ridge.cv,s="lambda.1se")
+```
+
+---
+
+3. Use the optimal model to predict the response for the test data. Compare the predictions with the reported values graphically. Compare the RMSE results with those from the previous exercises.
+
+```{r}
+pred.ridge <- predict(ridge.cv,newx=as.matrix(test_data[,-1]),s="lambda.1se")
+sqrt(mean((test_data[,"y"]-pred.ridge)^2))
+plot(test_data[,"y"],pred.ridge)
+abline(c(0,1))
+```
+
+As we can immediately see, the result is less than promising, with a very large RMSE. For comparison, the RMSE I achieved for the PCR model in the last exercise was ~0.29, with the RMSE of the PLS model being about ~0.29 as well. 
+
+---
+
+## Task 2: Lasso Regression
+
+1. Fit the model:
+
+```{r}
+lasso <- glmnet(as.matrix(train_data[, -1]), train_data$y)
+plot(lasso, xvar = "lambda")
+```
+
+This plot again shows us the coefficients versus different values of lambda. However, on the top we can see the number of variables that are used in the model, hence variable selection is performed.
+
+---
+
+2. Cross Validation:
+
+```{r}
+lasso.cv <- cv.glmnet(as.matrix(train_data[,-1]),train_data$y)
+plot(lasso.cv)
+coef(lasso.cv,s="lambda.1se")
+```
+
+As said before, we can clearly see that variable selection is being performed, as we receive several zero entries in the resulting coefficient vector.
+
+---
+
+3. Test Set Prediction:
+
+```{r}
+pred.lasso <- predict(lasso.cv,newx=as.matrix(test_data[,-1]),s="lambda.1se")
+sqrt(mean((test_data[,"y"]-pred.lasso)^2))
+plot(test_data[,"y"],pred.lasso)
+abline(c(0,1))
+```
+
+Here, we achieve a way better RMSE. As discussed in the lectures, since the data set is a time series, it contains lagged data, which is sub optimal for our regression tasks. I would assume that Lasso regression performs better in this case, because it performs variable selection and removes many of said lagged variables.
+
+---
+
+## Task 3: Adaptive Lasso Regression
+
+Do the same tasks as before. Use the Ridge coefficients as weights – see course notes (it should be the inverse absolute regression coefficients). Compare the resulting regression coefficients with those from Lasso regression. Is the model more plausible for the interpretation?
+
+1. Fit the model:
+
+```{r}
+coef.ridge <- coef(ridge.cv,s="lambda.1se")
+alasso <- glmnet(
+  as.matrix(train_data[,-1]),
+  train_data$y, 
+  penalty.factor = 1 / abs(coef.ridge[-1])
+)
+plot(alasso, xvar="lambda")
+```
+
+Again we fit the model, but this time using the Adaptive Lasso technique. This time we leave alpha at its default value, but pass the parameter penalty.factor to the function, and set it to the inverse of the corresponding coefficients of our ridge regression model. This way, we achieve different shrinkage among variables. If the ridge coefficient is large, its corresponding penalty is smaller, leading to a bigger value of the adaptive lasso coefficient.
+
+---
+
+2. Cross Validation:
+
+```{r}
+alasso.cv <- cv.glmnet(
+  as.matrix(train_data[,-1]), 
+  train_data$y, 
+  penalty.factor = 1 / abs(coef.ridge[-1])
+)
+plot(alasso.cv)
+coef(alasso.cv,s="lambda.1se")
+```
+
+Here we can see that the MSE stops strictly increasing with larger values of lambda, as was the case with Lasso Regression, but it stays constant.
+
+---
+
+3. Test Set Prediction:
+
+```{r}
+pred.alasso <- predict(alasso.cv,newx=as.matrix(test_data[,-1]),s="lambda.1se")
+sqrt(mean((test_data[,"y"]-pred.alasso)^2))
+plot(test_data[,"y"],pred.alasso)
+abline(c(0,1))
+```
+
+In this case, we achieved the best RMSE with Lasso regression. However, Lasso and Adaptive Lasso both score reasonably well. 

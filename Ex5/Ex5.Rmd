@@ -1,0 +1,181 @@
+---
+title: "Exercise 5"
+subtitle: "Advanced Methods for Regression and Classification"
+author: "Alexander Linus Grübling"
+date: "`r Sys.Date()`"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+if (!require("ROCit")) {
+  install.packages("ROCit")
+}
+if (!require("car")) {
+  install.packages("car")
+}
+
+library(ROCit)
+library(car)
+
+set.seed(12122371)
+```
+
+# Exercise 5
+
+Install and load the R package ROCit. Load the data set Loan from this package and look at the help pages for details. We want to predict the binary variable Status using leastsquares regression based on the remaining variables as predictors. Note that the response needs to be converted to a numerical variable, see also str(Loan) for the variable type.
+
+```{r}
+data("Loan")
+str(Loan)
+summary(Loan)
+
+Loan$Status <- ifelse(Loan$Status == "CO", 1, 0)
+```
+
+## Task 1
+
+Split the samples randomly into training (2/3) and test (1/3) data. Use lm() to build a model based on the training data. Is any data preprocessing necessary or advisable?
+
+```{r}
+colSums(is.na(Loan))
+
+par(mfrow = c(2, 3))
+hist(Loan$Amount)
+hist(Loan$IntRate)
+hist(Loan$ILR)
+hist(Loan$Income)
+hist(Loan$Score)
+
+Loan$Amount <- log(Loan$Amount)
+Loan$Amount <- scale(Loan$Amount)
+Loan$IntRate <- scale(Loan$IntRate)
+Loan$ILR <- scale(Loan$ILR)
+Loan$Income <- log(Loan$Income)
+Loan$Income <- scale(Loan$Income)
+Loan$Score <- scale(Loan$Score)
+
+par(mfrow = c(2, 3))
+hist(Loan$Amount)
+hist(Loan$IntRate)
+hist(Loan$ILR)
+hist(Loan$Income)
+hist(Loan$Score)
+
+train_index <- sample(1:nrow(Loan), size = 2/3 * nrow(Loan))
+train_data <- Loan[train_index, ]
+test_data <- Loan[-train_index, ]
+
+model <- lm(Status ~ ., data = train_data)
+```
+
+## Task 2
+
+Inspect the outcome of summary() applied on the result object. What do you conclude?
+
+```{r}
+summary(model)
+```
+
+None of the variabels seem to be significant for the response, as such the coefficients are all rather low. Term has been removed from the model alltogehter because it is linear dependent on other variables in the dataset.
+
+## Task 3 
+Look at plot() applied on the result object. Shall we be worried?
+
+```{r}
+plot(model)
+```
+
+These plots give highly unusual patterns, with the qq-plot looking like a sigmoid function instead of a straight line, and residuals vs fitted giving two parallel lines. So yes, we should be worried.
+
+## Task 4
+
+Use predict() to predict the response for the training set, and visualize these predictions (y-axis) together with their true class labels (x-axis). Which cutoff value would be useful in order to obtain reasonable class predictions?
+
+```{r}
+train_predictions <- predict(model, newdata = train_data)
+
+plot(train_data$Status, train_predictions,
+     xlab = "True Class (Status)",
+     ylab = "Predicted Values",
+     main = "Predicted Values vs. True Class Labels",
+     col = ifelse(train_data$Status == 1, "blue", "red"),
+     pch = 16)
+legend("topright", legend = c("FP (1)", "CO (0)"), col = c("blue", "red"), pch = 16)
+
+mean_pred <- mean(train_predictions)
+abline(h = mean_pred, col = "green", lwd = 2, lty = 2)
+text(0, mean_pred + 0.05, labels = paste("Cutoff =", round(mean_pred, 2)), col = "green")
+```
+
+## Task 5
+
+Look at the confusion matrix, which you obtain by table(Actual,Predicted), see page 2, where Actual are the true class labels, and Predicted are the predicted ones for the training set, using the cutoff value. Which conclusions can you draw from these numbers?
+
+```{r}
+class.pred <- ifelse(train_predictions >= mean_pred, "FP", "CO")
+temp <- ifelse(train_data$Status == 1, "CO", "FP")
+table(Actual = temp, Predicted = class.pred)
+```
+
+We can see that we achieve quite a high number of True FP classifications, but sadly also an extremely high number of false CO classifications.
+
+## Task 6
+
+Use rocit(prediction,Actual), where prediction is the outcome of the predict() function. Look at summary() and plot() of the result. Which value would indicate the quality of your classifier (see also page 2)? Is the classifier doing a good job?
+
+```{r}
+roc_result <- rocit(score = train_predictions, class = train_data$Status)
+summary(roc_result)
+plot(roc_result)
+```
+
+The quality of the classifier is indicated by the Area under the Curve, which refers to the ROC Curve plotted here. Ideally, this would be 1. In this case, it is 0.706, which is at least a moderately good classification.
+
+## Task 7
+
+Use measureit(prediction,Actual,measure=c("TPR","TNR")), see also help pages. The result object contains information to compute the balanced accurary (see page 2). Show a plot of this measure versus the cutoff value, and select the optimal cutoff.
+
+```{r}
+measure_result <- measureit(score = train_predictions, 
+                            class = train_data$Status, 
+                            measure = c("TPR", "TNR"))
+measure_result$BalancedAccuracy <- (measure_result$TPR + measure_result$TNR) / 2
+plot(measure_result$Cutoff, 
+     measure_result$BalancedAccuracy, 
+     type = "l", 
+     col = "blue", 
+     lwd = 2,
+     xlab = "Cutoff", 
+     ylab = "Balanced Accuracy", 
+     main = "Balanced Accuracy vs. Cutoff")
+
+optimal_cutoff <- measure_result$Cutoff[which.max(measure_result$BalancedAccuracy)]
+abline(v = optimal_cutoff, col = "red", lwd = 2, lty = 2)
+```
+
+## Task 8
+
+With this cutoff, produce again a confusion matrix, but this time based on the test set observations. What are your final conclusions?
+
+```{r}
+test_predicted_probs <- predict(model, test_data, type = "response")
+
+test_predicted <- ifelse(test_predicted_probs >= optimal_cutoff, "FP", "CO")
+
+temp <- ifelse(test_data$Status == 1, "CO", "FP")
+confusion_matrix <- table(Actual = temp, Predicted = test_predicted)
+print(confusion_matrix)
+
+total <- sum(confusion_matrix)
+accuracy <- sum(diag(confusion_matrix)) / total
+sensitivity <- confusion_matrix["FP", "FP"] / sum(confusion_matrix["FP", ])
+specificity <- confusion_matrix["CO", "CO"] / sum(confusion_matrix["CO", ])
+
+cat("Accuracy:", accuracy, "\n")
+cat("Sensitivity (TPR):", sensitivity, "\n")
+cat("Specificity (TNR):", specificity, "\n")
+```
+
+We can see that we received a drastically worse result for the test set prediction. Since the test set has not unknown to our classifier before, it seems fair to say that i generalizes pretty bad to unseen data. We receive a better TNR value than TPR, which makes sense, since the reponse variable is highly unbalanced. Thus, it is very hard for our classifier to learn to correctly predict the only sparsly existing CO class.
+
