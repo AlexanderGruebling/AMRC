@@ -1,0 +1,274 @@
+---
+title: "Exercise 7"
+subtitle: "Advanced Methods for Regression and Classification"
+author: "Alexander Linus Grübling"
+date: "`r Sys.Date()`"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+if (!require("ISLR")) {
+  install.packages("ISLR")
+}
+if (!require("glmnet")) {
+  install.packages("glmnet")
+}
+library(ISLR)
+library(glmnet)
+
+set.seed(12122371)
+```
+
+1. Use the data from http://archive.ics.uci.edu/ml/datasets/Bank+Marketing, which are also available on our TUWEL course. Load the smaller data set using `d <- read.csv2("bank.csv")`. The data contain information about direct marketing campaigns (phone calls) of a Portuguese banking institution. The classification goal is to predict if the client will subscribe a term deposit or not. This information is contained in the binary variable y (last one). Do not use the variable “duration”, as this would not make sense for test set predictions.
+
+```{r}
+d <- read.csv2("bank.csv", stringsAsFactors = TRUE)
+d <- subset(d, select = -duration)
+d$y <- factor(d$y, levels = c("no", "yes"))
+```
+
+The data set is heavily imbalanced, i.e. we have many more “no” clients, we might have a problem with high misclassifications for the “yes” clients, which are in fact the interesting ones, since the bank does not want to lose potential customers. Therefore, use the “balanced accuracy” as an evaluation measure.
+
+(a) Select randomly a training set with 3000 observations, and use logistic regression (function `glm()` with `family="binomial"`). Look at the inference table (with `summary()`) and interpret the outcome.
+
+```{r}
+train_indices <- sample(nrow(d), 3000)
+train_data <- d[train_indices, ]
+test_data <- d[-train_indices, ]
+
+model <- glm(y ~ ., train_data, family = "binomial")
+summary(model)
+```
+
+A number of coefficient have been found to contribute significantly to the model, like `contactunknown`, `monthoct` and `poutcomesuccess`. The negative coefficient of `contactunknown` indicates, that this variable decreases the log-odds of the response being 1, while positive coefficients indicate an increase in probability.
+
+---
+
+(b) Use the model to predict the group label of the remaining test set observations (what does the function actually predict by default?). Compute the misclassification rate for every group separately, and report the balanced accuracy.
+
+```{r}
+pred <- predict(model, newdata = test_data, type = "response")
+pred_labels <- ifelse(pred > 0.5, "yes", "no")
+
+conf_matrix <- table(Predicted = pred_labels, Actual = test_data$y)
+
+true_positive <- conf_matrix["yes", "yes"]
+false_positive <- conf_matrix["yes", "no"]
+true_negative <- conf_matrix["no", "no"]
+false_negative <- conf_matrix["no", "yes"]
+
+misclass_no <- false_positive / (false_positive + true_negative)
+misclass_yes <- false_negative / (false_negative + true_positive) 
+
+sensitivity <- true_positive / (true_positive + false_negative)
+
+specificity <- true_negative / (true_negative + false_positive)
+
+balanced_accuracy <- (sensitivity + specificity) / 2
+
+cat("Misclassification rate for 'no':", misclass_no, "\n")
+cat("Misclassification rate for 'yes':", misclass_yes, "\n")
+cat("Balanced accuracy:", balanced_accuracy, "\n")
+```
+
+As expected, we achieve quite different misclassification rates for the different classes. For the `no`-class, we receive a low value, while the `yes`-class, which is severly underrepresented in the data, receives a really high misclassification error of 0.8. Together, this results in a mediocre balanced accuracy of 0.55.
+
+---
+
+(c) A way to consider the problem of imbalanced groups is to assign a weight to every observation, by using the weights argument in the `glm()` function. How do you have to select the weights, and what is the resulting balanced accuracy?
+
+```{r, warning=FALSE}
+class_counts <- table(d$y)
+total_count <- sum(class_counts)
+
+weights <- ifelse(d$y == "yes", 
+                  total_count / class_counts["yes"], 
+                  total_count / class_counts["no"])
+
+log_model_weighted <- glm(y ~ ., data = train_data, 
+                          family = "binomial", weights = weights[train_indices])
+
+pred_probs_weighted <- predict(
+  log_model_weighted, 
+  newdata = test_data, 
+  type = "response"
+)
+
+pred_labels_weighted <- ifelse(pred_probs_weighted > 0.5, "yes", "no")
+
+conf_matrix_weighted <- table(Predicted = pred_labels_weighted, Actual = test_data$y)
+
+true_positive_w <- conf_matrix_weighted["yes", "yes"]
+false_positive_w <- conf_matrix_weighted["yes", "no"]
+true_negative_w <- conf_matrix_weighted["no", "no"]
+false_negative_w <- conf_matrix_weighted["no", "yes"]
+
+sensitivity_w <- true_positive_w / (true_positive_w + false_negative_w)
+specificity_w <- true_negative_w / (true_negative_w + false_positive_w)
+
+balanced_accuracy_w <- (sensitivity_w + specificity_w) / 2
+
+misclass_no_w <- false_positive_w / (false_positive_w + true_negative_w)
+misclass_yes_w <- false_negative_w / (false_negative_w + true_positive_w)
+
+cat("Misclassification rate for 'no':", misclass_no_w, "\n")
+cat("Misclassification rate for 'yes':", misclass_yes_w, "\n")
+cat("Balanced accuracy (weighted):", balanced_accuracy_w, "\n")
+```
+
+The weights have to be selected inversely proportional to the frequency in which a class exists in the dataset. The more frequent a class exists, the lower the weight that is assigned to each observation should be. Thus the weights are selected, and we indeed achieve a much lower misclassification rate for the `yes`-class, and also a higher balanced accuracy. However, this comes at the cost of a higher misclassification rate of the `no`-class.
+
+---
+
+(d) Based on the model from 1(c), use stepwise variable selection with the function `step()` to simplify the model. Does this also lead to an improvement of the balanced accuracy?
+
+```{r, warning=FALSE}
+simplified_model <- step(log_model_weighted, direction = "both")
+summary(simplified_model)
+
+pred_probs_simplified <- predict(
+  simplified_model, 
+  newdata = test_data, 
+  type = "response"
+)
+
+pred_labels_simplified <- ifelse(pred_probs_simplified > 0.5, "yes", "no")
+conf_matrix_simplified <- table(Predicted = pred_labels_simplified, Actual = test_data$y)
+
+true_positive_s <- conf_matrix_simplified["yes", "yes"]
+false_positive_s <- conf_matrix_simplified["yes", "no"]
+true_negative_s <- conf_matrix_simplified["no", "no"]
+false_negative_s <- conf_matrix_simplified["no", "yes"]
+
+sensitivity_s <- true_positive_s / (true_positive_s + false_negative_s)
+specificity_s <- true_negative_s / (true_negative_s + false_positive_s)
+
+balanced_accuracy_s <- (sensitivity_s + specificity_s) / 2
+cat("Balanced accuracy (simplified model):", balanced_accuracy_s, "\n")
+cat("Balanced accuracy (weighted model):", balanced_accuracy_w, "\n")
+```
+
+Stepwise variable selection achieves a slightly better balanced accuracy, however only by a slim margin.
+
+---
+
+2. Use the data set data(Khan) from the package ISLR. The data set consists of a number of tissue samples corresponding to four distinct types of small round blue cell tumors. For each tissue sample, 2308 gene expression measurements are available (see also help file). The task is to train a classifier based on the training data (`Khan$xtrain`, `Khan$ytrain`), use it for predicting the class of the test data (`Khan$xtest`), and to evaluate the predictions using the group information of the test data (`Khan$ytest`).
+
+```{r}
+library(ISLR)
+
+data(Khan)
+
+str(Khan)
+summary(Khan)
+```
+
+(a) Why would LDA or QDA not work here? Would RDA work (you can either try it out, or simply argue)?
+
+As is often the case with medical data, the data in this case has a strongly flat characteristic, i.e. the number of variables strongly dominates the number of observations. The sample covariance matrix of such a data structure becomes singular, making LDA unusable. The same issue arises for QDA, which even has to estimate the sample covariance matrix for each class separately. RDA however could work in this case, since its regularization ability stabilizes the covariance estimates, making this approach suitable for such a high-dimensional setting.
+
+---
+
+(b) Use the function `cv.glmnet()` from the package `glmnet`, with the argument `family="multinomial"`, to build a model for the training set (the response might need to be converted to a factor). Plot the outcome object. What do you conclude? What is the objective function to be minimized?
+
+```{r}
+library(glmnet)
+
+ytrain_factor <- as.factor(Khan$ytrain)
+
+cv_model <- cv.glmnet(Khan$xtrain, ytrain_factor, family = "multinomial")
+
+plot(cv_model)
+```
+
+Larger values of the regularization parameter $\lambda$ are leading to some coefficients becoming closer to zero, simplifying the model but also leading to a lower prediction accuracy. The left dotted line shows the $\lambda$ that minimizes the deviance, and the right dotted line shows the highest $\lambda$ value still within one standard deviation of the best deviance.
+
+---
+
+(c) Which variables contribute to the model? To see this, you can use coef() for the output object. You obtain an object with 4 (= number of groups) list elements, containing the estimated regression coefficients. Thus, this is different from our approach to logistic regression with K groups in the course notes, where you would only obtain K - 1 coefficient vectors.
+
+```{r}
+optimal_lambda <- cv_model$lambda.min
+coefficients <- coef(cv_model, s = optimal_lambda)
+contributing_vars <- lapply(coefficients, function(class_coef) {
+    non_zero_indices <- which(class_coef != 0)
+    data.frame(
+        Variable = rownames(class_coef)[non_zero_indices],
+        Coefficient = as.numeric(class_coef[non_zero_indices])
+    )
+})
+
+for (i in seq_along(contributing_vars)) {
+    cat("Class:", i, "\n")
+    print(contributing_vars[[i]])
+    cat("\n")
+}
+
+
+all_non_zero <- unique(unlist(lapply(coefficients, function(class_coef) {
+    rownames(class_coef)[which(class_coef != 0)]
+})))
+
+all_contributing_vars <- setdiff(all_non_zero, "(Intercept)")
+
+cat("Variables contributing to the model:\n")
+print(all_contributing_vars)
+```
+
+We can see the coefficient estimates for each group, with many of the variables having zero impact. Interestingly enough, the different groups feature different variables that contribute to them.
+
+---
+
+(d) Select one of the variables from 2(c) which is relevant e.g. for the first group, and plot this variable against the response (using the training data). What you should see is that the values of the first group clearly differ from those of the other groups.
+
+```{r}
+ytrain_factor <- as.factor(Khan$ytrain)
+
+coef_first_group <- coefficients[[1]]
+
+non_zero_indices <- which(coef_first_group != 0)
+non_zero_genes <- rownames(coef_first_group)[non_zero_indices]
+non_zero_genes <- setdiff(non_zero_genes, "(Intercept)")
+
+selected_gene <- non_zero_genes[1]
+selected_gene_index <- as.numeric(gsub("V", "", selected_gene))
+selected_gene_values <- Khan$xtrain[, selected_gene_index]
+
+boxplot(selected_gene_values ~ ytrain_factor,
+        main = "Expression of V1 by Tumor Class",
+        xlab = "Tumor Class",
+        ylab = "Gene Expression Level",
+        col = c("red", "blue", "green", "purple"))
+
+```
+
+As described above, we can see a clearly different distribution of `V1` for the first group when compared with the other groups.
+
+---
+
+(e)  Now use the trained model and predict the group membership of the test data. Be careful, predict() yields predictions for each observation to each class, and you need to select the appropriate class. Report the confusion table and the misclassification error for the test data.
+
+```{r}
+predicted_probs <- predict(
+  cv_model, 
+  newx = Khan$xtest, 
+  s = "lambda.min", 
+  type = "response"
+)
+
+predicted_classes <- apply(predicted_probs, 1, function(row) which.max(row))
+actual_classes <- Khan$ytest
+
+confusion_matrix <- table(
+  Predicted = predicted_classes, 
+  Actual = actual_classes
+)
+print(confusion_matrix)
+misclassified <- sum(predicted_classes != actual_classes)
+misclassification_error <- misclassified / length(actual_classes)
+
+cat("Misclassification Error:", misclassification_error, "\n")
+```
+
+As we can see, we obtain a perfect prediction.

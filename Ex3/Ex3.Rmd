@@ -1,0 +1,197 @@
+---
+title: "Exercise 3"
+subtitle: "Advanced Methods for Regression and Classification"
+author: "Alexander Linus Grübling"
+date: "2024-11-06"
+output: pdf_document
+header-includes:
+  - \usepackage{tcolorbox}
+  - \tcbuselibrary{listingsutf8}
+  - \newtcolorbox{mytextbox}[1][]{colback=blue!10!white, colframe=blue!50!black, fonttitle=\bfseries, title=#1}
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+if (!require("pls", character.only = TRUE)) {
+    install.packages("pls")
+}
+library("pls")
+```
+
+
+\begin{mytextbox}[Exercise 3]
+Use the data set “building.RData” from the last exercise, the same training/test split,
+and the RMSE as an evaluation measure.
+\end{mytextbox}
+
+```{r loadData}
+set.seed(12122371)
+load("building.RData")
+
+train_indices <- sample(1:nrow(df), size = floor(nrow(df) / 4))
+
+train_data <- df[train_indices, ]
+test_data <- df[-train_indices, ]
+```
+
+## 1) Principal Component Regression (PCR)
+
+\begin{mytextbox}[Task 1a:]
+Use the training data to apply PCR, which is implemented in the library(pls) as the function pcr(), see help. Perform cross-validation using 10 segments (see help of pcr()) and scale the data (scale=TRUE).
+\end{mytextbox}
+
+```{r applyPCR, results='hide'}
+pcr_model <- pcr(
+  y ~ ., 
+  data = train_data,
+  scale = TRUE, 
+  validation = "CV", 
+  segments = 10,
+  segment.type = "random"
+  )
+summary(pcr_model)
+```
+
+\begin{mytextbox}[Task 1b:]
+Plot the obtained prediction errors from cross-validation, see lecture notes. How many components seem to be optimal? What is the resulting RMSE?
+\end{mytextbox}
+
+```{r plotPredictionErrors}
+par(mfrow = c(2, 2))
+plot(RMSEP(pcr_model), legendpos="topleft", main = "All components")
+plot(RMSEP(pcr_model, ncomp = 1:20), main = "First 20 components")
+plot(RMSEP(pcr_model, ncomp = 1:40), main = "First 40 components")
+plot(RMSEP(pcr_model, ncomp = 1:60), main = "First 60 components")
+```
+
+By plotting all components, one gets a rather unusual Validation plot. While at first I believed there to have been some mistake, upon "zooming" into the first components, it becomes obvious, that the first plot is just dominated by an exploding error rate for models containing more than about 50 components. Thus, it seems that a model with about 20 components is optimal.
+
+\begin{mytextbox}[Task 1c:]
+Use the function predplot() to plot the measured y values against the cross-validated y values considering the optimal model.
+\end{mytextbox}
+
+```{r predictionPlot}
+predplot(pcr_model, ncomp = 20)
+abline(0, 1, col = "red")
+```
+
+\begin{mytextbox}[Task 1d:]
+Plot the predicted versus observed values for the test data, and compute the RMSE.
+\end{mytextbox}
+
+```{r predictionPlotTest}
+predplot(pcr_model, newdata = test_data, ncomp = 20)
+abline(0, 1, col = "red")
+
+pcr_predictions = predict(pcr_model, newdata = test_data, ncomp = 20)
+rmse <- sqrt(mean((test_data$y - pcr_predictions)^2))
+paste("Model predictions result in a RMSE of", rmse)
+```
+
+## 2) Partial Least Squares Regression (PLS)
+
+\begin{mytextbox}[Task 2a:]
+Apply PLS on the training data, implemented in the library(pls) as function plsr(), see help. Apply the function similarly as in 1.(a).
+\end{mytextbox}
+
+```{r plsrModel, results='hide'}
+plsr_model <- plsr(
+  y ~ ., 
+  data = train_data,
+  scale = TRUE, 
+  validation = "CV", 
+  segments = 10,
+  segment.type = "random"
+  )
+summary(plsr_model)
+```
+
+\begin{mytextbox}[Task 2b-d:]
+Perform the same tasks as in 1.(b)-(d) for the PLS model. Compare the outcomes with the PCR model outcomes.
+\end{mytextbox}
+
+```{r plotPLSR}
+par(mfrow = c(2, 2))
+plot(RMSEP(plsr_model), legendpos="topleft", main = "All components")
+plot(RMSEP(plsr_model, ncomp = 1:20), main = "First 20 components")
+plot(RMSEP(plsr_model, ncomp = 1:40), main = "First 40 components")
+plot(RMSEP(plsr_model, ncomp = 1:60), main = "First 60 components")
+```
+
+Again, we see a steep increase in the reported error for large amounts of components. However, the sweet spot in number of components seems to occur way earlier compared to the PCR model. Here, I would say that about 7 components is optimal.
+
+```{r predictionPlotPLSR}
+predplot(plsr_model, ncomp = 7)
+abline(0, 1, col = "red")
+```
+
+With only seven components, it seems like we achieve a pretty accurate prediction result. However, it remains an interesting question how the model performs on the test data. Let's take a look at that in the next chunk.
+
+```{r plotTestDataPLSR}
+predplot(plsr_model, newdata = test_data, ncomp = 7)
+abline(0, 1, col = "red")
+
+plsr_predictions = predict(plsr_model, newdata = test_data, ncomp = 7)
+plsr_rmse <- sqrt(mean((test_data$y - plsr_predictions)^2))
+paste("Model predictions result in a RMSE of", plsr_rmse)
+```
+
+We can see that achieved a pretty similar RMSE with a drastically lower number of components.
+
+\begin{mytextbox}[Task 2e:]
+Compare the regression coefficients from the PCR and the PLS model in a plot and draw conclusions.
+\end{mytextbox}
+
+```{r plotCoefficients}
+pcr_coefficients <- coef(pcr_model, ncomp = 20)
+plsr_coefficients <- coef(plsr_model, ncomp = 7)
+
+pcr_coefficients <- as.vector(pcr_coefficients)
+plsr_coefficients <- as.vector(plsr_coefficients)
+
+coefficients_df <- data.frame(
+  Predictor = 1:length(pcr_coefficients),
+  PCR = pcr_coefficients,
+  PLSR = plsr_coefficients
+)
+
+plot(coefficients_df$Predictor, coefficients_df$PCR, type = "b", col = "blue",
+     pch = 16, xlab = "Predictors", ylab = "Regression Coefficient",
+     main = "Comparison of PCR and PLS Regression Coefficients")
+lines(coefficients_df$Predictor, coefficients_df$PLSR, type = "b", col = "red", pch = 16)
+
+legend("topright", legend = c("PCR", "PLS"), col = c("blue", "red"), pch = 16)
+```
+
+From this plot we can see that both models assign a pretty similar importance to most predictors. This indicates, that the overall structure of the predictor-response relationship is similar for both models. Further it seems as though PCR's coefficients vary less than the ones of the PLS model. One possible explanation for this could be, that PLS maximizes Covariance with the response variable, whereas PCR aims at maximizing predictor variance.
+
+## 3)
+\begin{mytextbox}[Task 3:]
+The output objects from (1) and (2) contain the list elements $scores and $loadings, which are the matrices Z and V from the course notes in case of PCR, and T and W in case of PLS, respectively. Visualize in scatterplots the first two score vectors as well as the first two loadings vectors for PCR and PLS, respectively, and try to
+explain shortly what you see. Thus, these are 4 plots, and they reveal interesting patterns.
+\end{mytextbox}
+
+```{r}
+pcr_scores <- pcr_model$scores[, 1:2] 
+pcr_loadings <- pcr_model$loadings[, 1:2]
+
+plsr_scores <- plsr_model$scores[, 1:2] 
+plsr_loadings <- plsr_model$loadings[, 1:2]
+
+par(mfrow = c(2, 2))
+
+plot(pcr_scores[, 1], pcr_scores[, 2], xlab = "PCR Score 1", ylab = "PCR Score 2",
+     main = "PCR Scores (Components 1 and 2)", col = "blue", pch = 16)
+
+plot(pcr_loadings[, 1], pcr_loadings[, 2], xlab = "PCR Loading 1", ylab = "PCR Loading 2",
+     main = "PCR Loadings (Components 1 and 2)", col = "blue", pch = 16)
+
+plot(plsr_scores[, 1], plsr_scores[, 2], xlab = "PLS Score 1", ylab = "PLS Score 2",
+     main = "PLS Scores (Components 1 and 2)", col = "red", pch = 16)
+
+plot(plsr_loadings[, 1], plsr_loadings[, 2], xlab = "PLS Loading 1", ylab = "PLS Loading 2",
+     main = "PLS Loadings (Components 1 and 2)", col = "red", pch = 16)
+```
+
+The plots show clear patterns, namely in the form of curved shapes. As such , the PCR Score plot almost shows an oscillation, indicating a non-linear pattern in the principal component space. The loadings seem mostly to be spread around zero, with some clearly differing from this pattern. Therefore it seems as though some predictors influence the first two principal components way more than others.
+On the other hand, the PLS Scores vary more than their PCR counterparts. One could thus suspect that they capture some additional structure in the data that is important for predicting the response. The Loadings seem more spread out than the ones of the PCR model.

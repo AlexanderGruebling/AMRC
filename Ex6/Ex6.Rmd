@@ -1,0 +1,240 @@
+---
+title: "Exercise 6"
+subtitle: "Advanced Methods of Regression and Classification"
+author: "Alexander Linus Grübling"
+date: "`r Sys.Date()`"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+Use again the Loan data set from the last exercise, and the same split into training and test data. Again, we want to predict the variable Status by using the remaining variables, but now based on discriminant analysis.
+For the following tasks, use as evaluation measures of the classifier the
+- misclassification rate: (FP+FN)/(FP+TN+FN+TP)
+- balanced accuracy: (TPR+TNR)/2
+
+1. Linear Discrimant Analysis (LDA): function lda from library(MASS)
+
+1.a Apply lda() to the training set. Is any data preprocessing necessary or advisable?
+
+```{r}
+library(ROCit)
+library(MASS)
+
+Loan$Status <- ifelse(Loan$Status == "CO", 1, 0)
+Loan <- subset(Loan, select = -c(Term, Score))
+
+colSums(is.na(Loan))
+
+train_index <- sample(1:nrow(Loan), size = 2/3 * nrow(Loan))
+train_data <- Loan[train_index, ]
+test_data <- Loan[-train_index, ]
+
+lda_model <- lda(Status ~ ., data = train_data)
+```
+
+We needed to remove the Term variable as it contains a constant value for both groups. Furthermore I removed the Score Variable as it is linear dependent on other variables.
+
+1.b Compute the evaluation measures for the training data. What do you conclude?
+
+```{r}
+lda_pred <- predict(lda_model, newdata = train_data)
+
+conf_matrix <- table(Predicted = lda_pred$class, Actual = train_data$Status)
+misclass_rate <- sum(conf_matrix[1, 2], conf_matrix[2, 1]) / sum(conf_matrix)
+
+TPR <- conf_matrix[2, 2] / sum(conf_matrix[2, ])
+TNR <- conf_matrix[1, 1] / sum(conf_matrix[1, ])
+balanced_accuracy <- (TPR + TNR) / 2
+
+print(paste("Misclassification Rate: ", misclass_rate))
+print(paste("Balanced Accuracy: ", balanced_accuracy))
+```
+
+As we can see, we achieve quite a low misclassification rate. However, we have to keep in mind that this is only on the training data and thus is not such an impressive feat.
+
+1.c Predict the group membership for the test data and compute the evaluation measures. What do you conclude?
+
+```{r}
+lda_pred <- predict(lda_model, newdata = test_data)
+
+conf_matrix <- table(Predicted = lda_pred$class, Actual = test_data$Status)
+misclass_rate <- sum(conf_matrix[1, 2], conf_matrix[2, 1]) / sum(conf_matrix)
+
+TPR <- conf_matrix[2, 2] / sum(conf_matrix[2, ])
+TNR <- conf_matrix[1, 1] / sum(conf_matrix[1, ])
+balanced_accuracy <- (TPR + TNR) / 2
+
+print(paste("Misclassification Rate: ", misclass_rate))
+print(paste("Balanced Accuracy: ", balanced_accuracy))
+```
+
+For the test data, we also achieve quite a low misclassification rate, which suggests a promising model.
+
+2. Assume that we want to maximize the balanced accuracy. This could be achieved by selecting a balanced training set, i.e., the same number of observations from both groups, to train the classifier. Thus, repeat tasks 1.(a)-(c) for:
+
+2.a "Undersampling”: Suppose the number of samples in the original training set is n1 and n2 for the two groups. Now select from this training set min(n1, n2) samples from each group. The test set is unchanged.
+
+```{r}
+group_0 <- train_data[train_data$Status == 0, ]
+group_1 <- train_data[train_data$Status == 1, ]
+
+min_size <- min(nrow(group_0), nrow(group_1))
+
+undersampled_0 <- group_0[sample(1:nrow(group_0), size = min_size), ]
+undersampled_1 <- group_1[sample(1:nrow(group_1), size = min_size), ]
+
+undersampled_train_data <- rbind(undersampled_0, undersampled_1)
+
+table(undersampled_train_data$Status)
+
+
+
+lda_model_under <- lda(Status ~ ., data = undersampled_train_data)
+
+lda_pred_under <- predict(lda_model_under, newdata = undersampled_train_data)
+
+conf_matrix <- table(Predicted = lda_pred_under$class, Actual = undersampled_train_data$Status)
+misclass_rate <- sum(conf_matrix[1, 2], conf_matrix[2, 1]) / sum(conf_matrix)
+
+TPR <- conf_matrix[2, 2] / sum(conf_matrix[2, ])
+TNR <- conf_matrix[1, 1] / sum(conf_matrix[1, ])
+balanced_accuracy <- (TPR + TNR) / 2
+
+print("Train Data:")
+print(paste("Misclassification Rate: ", misclass_rate))
+print(paste("Balanced Accuracy: ", balanced_accuracy))
+
+
+
+lda_pred <- predict(lda_model_under, newdata = test_data)
+
+conf_matrix <- table(Predicted = lda_pred$class, Actual = test_data$Status)
+misclass_rate <- sum(conf_matrix[1, 2], conf_matrix[2, 1]) / sum(conf_matrix)
+
+TPR <- conf_matrix[2, 2] / sum(conf_matrix[2, ])
+TNR <- conf_matrix[1, 1] / sum(conf_matrix[1, ])
+balanced_accuracy <- (TPR + TNR) / 2
+
+print("Test Data:")
+print(paste("Misclassification Rate: ", misclass_rate))
+print(paste("Balanced Accuracy: ", balanced_accuracy))
+```
+
+Using undersampling, we achieve a clear increase in misclassification rate, both for the prediction of the train and the test data.
+
+2.b "Oversampling”: Select from the training set max(n1, n2) samples from each group. From the smaller group you need to sample with replacement. The test set is unchanged.
+
+```{r}
+max_size <- max(nrow(group_0), nrow(group_1))
+
+if (nrow(group_0) < max_size) {
+  oversampled_0 <- group_0[sample(1:nrow(group_0), size = max_size, replace = TRUE), ]
+  oversampled_1 <- group_1  
+} else {
+  oversampled_0 <- group_0 
+  oversampled_1 <- group_1[sample(1:nrow(group_1), size = max_size, replace = TRUE), ]
+}
+
+oversampled_train_data <- rbind(oversampled_0, oversampled_1)
+table(oversampled_train_data$Status)
+
+lda_model_over <- lda(Status ~ ., data = oversampled_train_data)
+
+lda_pred_over <- predict(lda_model_over, newdata = oversampled_train_data)
+
+conf_matrix <- table(Predicted = lda_pred_over$class, Actual = oversampled_train_data$Status)
+misclass_rate <- sum(conf_matrix[1, 2], conf_matrix[2, 1]) / sum(conf_matrix)
+
+TPR <- conf_matrix[2, 2] / sum(conf_matrix[2, ])
+TNR <- conf_matrix[1, 1] / sum(conf_matrix[1, ])
+balanced_accuracy <- (TPR + TNR) / 2
+
+print("Train Data:")
+print(paste("Misclassification Rate: ", misclass_rate))
+print(paste("Balanced Accuracy: ", balanced_accuracy))
+
+lda_pred <- predict(lda_model_over, newdata = test_data)
+
+conf_matrix <- table(Predicted = lda_pred$class, Actual = test_data$Status)
+misclass_rate <- sum(conf_matrix[1, 2], conf_matrix[2, 1]) / sum(conf_matrix)
+
+TPR <- conf_matrix[2, 2] / sum(conf_matrix[2, ])
+TNR <- conf_matrix[1, 1] / sum(conf_matrix[1, ])
+balanced_accuracy <- (TPR + TNR) / 2
+
+print("Test Data:")
+print(paste("Misclassification Rate: ", misclass_rate))
+print(paste("Balanced Accuracy: ", balanced_accuracy))
+```
+
+Here we achieve a higher misclassification rate for the train data, but a lower for the test data, which is more important.
+
+Which strategy is more successful, and why?
+
+In this case, the oversampling method proves to be more successful. Since the minority class is massively underrepresented, oversampling allows us to keep all information from the majority class, which could be useful also for preodicting the minority class. In undersampling, we loose information from the majority class.
+
+3. Quadratic Discrimant Analysis (QDA): function qda from library(MASS). Use oversampling and undersampling for qda() and report the evaluation measures for the test set. What do you conclude?
+
+```{r}
+qda_model_undersampled <- qda(Status ~ ., data = undersampled_train_data)
+qda_model_oversampled <- qda(Status ~ ., data = oversampled_train_data)
+
+qda_pred_undersampled <- predict(qda_model_undersampled, test_data)$class
+qda_pred_oversampled <- predict(qda_model_oversampled, test_data)$class
+
+misclassification_rate <- function(true, pred) {
+  mean(true != pred)
+}
+
+balanced_accuracy <- function(true, pred) {
+  cm <- table(true, pred)
+  tpr <- cm[2, 2] / sum(cm[2, ])
+  tnr <- cm[1, 1] / sum(cm[1, ])
+  (tpr + tnr) / 2
+}
+
+true_values <- test_data$Status
+
+misclassification_rate_undersampled <- misclassification_rate(true_values, qda_pred_undersampled)
+balanced_accuracy_undersampled <- balanced_accuracy(true_values, qda_pred_undersampled)
+
+print(paste("Misclassification Rate: ", misclassification_rate_undersampled))
+print(paste("Balanced Accuracy: ", balanced_accuracy_undersampled))
+
+misclassification_rate_oversampled <- misclassification_rate(true_values, qda_pred_oversampled)
+balanced_accuracy_oversampled <- balanced_accuracy(true_values, qda_pred_oversampled)
+
+print(paste("Misclassification Rate: ", misclassification_rate_oversampled))
+print(paste("Balanced Accuracy: ", balanced_accuracy_oversampled))
+```
+
+For QDA, we receive comparable results to LDA, both for the under- and oversampled case. This again points to the explanation given in the point above, as to why Oversampling in this case performs better.
+
+4. Regularized Discrimant Analysis (RDA): function rda from library(klaR) Use oversampling and undersampling for rda() and report the evaluation measures for the test set. What do you conclude? Interpret the meaning of the resulting tuning parameters gamma and lambda.
+
+```{r}
+library(klaR)
+
+rda_model_undersampled <- rda(Status ~ ., data = undersampled_train_data)
+rda_model_oversampled <- rda(Status ~ ., data = oversampled_train_data)
+
+rda_pred_undersampled <- predict(rda_model_undersampled, test_data)$class
+rda_pred_oversampled <- predict(rda_model_oversampled, test_data)$class
+
+misclassification_rate_undersampled <- misclassification_rate(test_data$Status, pred_undersampled)
+balanced_accuracy_undersampled <- balanced_accuracy(test_data$Status, pred_undersampled)
+
+print(paste("Misclassification Rate: ", misclassification_rate_undersampled))
+print(paste("Balanced Accuracy: ", balanced_accuracy_undersampled))
+print(paste("Lambda: ", rda_model_undersampled$Lambda))
+
+misclassification_rate_oversampled <- misclassification_rate(test_data$Status, pred_oversampled)
+balanced_accuracy_oversampled <- balanced_accuracy(test_data$Status, pred_oversampled)
+
+print(paste("Misclassification Rate: ", misclassification_rate_oversampled))
+print(paste("Balanced Accuracy: ", balanced_accuracy_oversampled))
+```
+
