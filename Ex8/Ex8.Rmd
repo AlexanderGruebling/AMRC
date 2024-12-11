@@ -1,0 +1,322 @@
+---
+title: "Exercise 8"
+subtitle: "Advanced Methods for Regression and Classification"
+author: "Alexander Linus Grübling"
+date: "`r Sys.Date()`"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+set.seed(12122371)
+if (!require("gclus")) {
+  install.packages("gclus")
+}
+library(gclus)
+```
+
+Load the data ozone from the package gclus (see help page for detailed explanations). We would like to predict the ozone concentration (Ozone is the response variable) based on the temperature (Temp is the explanatory variable) by using splines. For that we construct basis expansions as discussed in the lecture. To construct these splines, you can use the function lecturespl(), which is printed in Section 8.1 of the course notes. For the following tasks we select 2 knots and order M = 4.
+Split the data randomly into training (2/3) and test (1/3) set.
+
+```{r data_loading}
+data(ozone)
+n <- nrow(ozone)
+train_indices <- sample(1:n, size = floor(2 * n / 3))
+
+train_set <- ozone[train_indices, c("Ozone", "Temp")]
+test_set <- ozone[-train_indices, c("Ozone", "Temp")]
+```
+
+```{r def_lecture_spl}
+lecturespl <- function(x, nknots=2, M=4){
+  # nknots ... number of knots -> placed at regular quantiles
+  # M ... M-1 is the degree of the polynomial
+  n <- length(x)
+  # X will not get an intercept column
+  X <- matrix(NA,nrow=n,ncol=(M-1)+nknots)
+  for (i in 1:(M-1)){ X[,i] <- x^i }
+    # now the basis functions for the constraints:
+    quant <- seq(0,1,1/(nknots+1))[c(2:(nknots+1))]
+    qu <- quantile(x,quant)
+    for (i in M:(M+nknots-1)){
+      X[,i] <- ifelse(x-qu[i-M+1]<0,0,(x-qu[i-M+1])^(M-1))
+    }
+  list(X=X,quantiles=quant,xquantiles=qu)
+}
+```
+
+---
+
+## Task 1
+**Task Description:** Construct the basis functions from the training set. Visualize the basis functions. For
+that you can use the following function:
+
+```{r def_plotspl}
+plotspl <- function(splobj,...){
+  matplot(splobj$x,splobj$X,type="l",lty=1, xlab="x",ylab="h(x)",...)
+  abline(v=splobj$xquantiles,lty=3,col=gray(0.5))
+}
+```
+
+
+```{r}
+x_train <- train_set[, "Temp"]
+
+splobj <- lecturespl(x = x_train, nknots = 2, M = 4)
+
+splobj$x <- x_train
+plotspl(splobj, main = "Visualization of Basis Splines (lecturespl)")
+```
+
+This plot shows us the different basis splines, each serving the purpose of capturing different patterns in the data (linear, quadratic, up to the degree we passed to the function, so $M=4$). The dotted grey lines indicate the knots indicate the knots, where the piecewise polynomial segments change.
+In general, the blue lines seem less responsive to temperature changes, indicating a basis of lower degree, while the green lines react more to changes in temperature.
+
+---
+
+## Task 2
+**Task Description:** Use these basis functions within lm() to predict the training data of the response. Plot the training data (ozone versus temperature) and visualize the predictions.
+Hint: The predictions should follow a smooth curve. If this is not the case, you might have to sort the training data first according to increasing values of the explanatory variable.
+
+```{r}
+response <- train_set[, "Ozone"]
+temperature <- train_set[, "Temp"]
+
+splobj <- lecturespl(x = temperature, nknots = 2, M = 4)
+
+basis_data <- as.data.frame(splobj$X)
+colnames(basis_data) <- paste0("H", 1:ncol(basis_data))
+lm_model <- lm(response ~ ., data = basis_data)
+
+predictions <- predict(lm_model)
+
+sorted_indices <- order(temperature)
+sorted_temp <- temperature[sorted_indices]
+sorted_response <- response[sorted_indices]
+sorted_predictions <- predictions[sorted_indices]
+
+plot(sorted_temp, sorted_response, pch = 16, col = "blue", 
+     xlab = "Temperature", ylab = "Ozone",
+     main = "Training Data and Predictions")
+lines(sorted_temp, sorted_predictions, col = "red", lwd = 2)
+legend("topleft", legend = c("Training Data", "Predictions"),
+       col = c("blue", "red"), pch = c(16, NA), lty = c(NA, 1), lwd = 2)
+
+```
+
+Here we can see the predictions that we received with our splines for the training data. We can see that we can capture the patterns in the data quite nicely, even though we used a linear model and the response and explanatory variable having a non-linear relationship.
+
+---
+
+## Task 3
+
+**Task Description:** Use the model to predict the response from the test set observations. Visualize training and test set in one plot, using different colors, and present in this plot also the predictions for training and test set.
+Hint: Training and test set predictions should be very similar. If this is not the case, something might be wrong.
+
+```{r}
+test_temperature <- test_set[, "Temp"]
+test_response <- test_set[, "Ozone"]
+
+test_splobj <- lecturespl(x = test_temperature, nknots = 2, M = 4)
+test_basis_data <- as.data.frame(test_splobj$X)
+colnames(test_basis_data) <- paste0("H", 1:ncol(test_basis_data))
+
+train_predictions <- predict(lm_model)
+test_predictions <- predict(lm_model, newdata = test_basis_data)
+
+train_sorted_indices <- order(temperature)
+sorted_train_temp <- temperature[train_sorted_indices]
+sorted_train_response <- response[train_sorted_indices]
+sorted_train_predictions <- train_predictions[train_sorted_indices]
+
+test_sorted_indices <- order(test_temperature)
+sorted_test_temp <- test_temperature[test_sorted_indices]
+sorted_test_response <- test_response[test_sorted_indices]
+sorted_test_predictions <- test_predictions[test_sorted_indices]
+
+plot(sorted_train_temp, sorted_train_response, pch = 16, col = "blue",
+     xlab = "Temperature", ylab = "Ozone", main = "Training and Test Data with Predictions")
+lines(sorted_train_temp, sorted_train_predictions, col = "blue", lwd = 2)
+
+points(sorted_test_temp, sorted_test_response, pch = 16, col = "green")
+lines(sorted_test_temp, sorted_test_predictions, col = "green", lwd = 2)
+
+legend("topleft", legend = c("Train Data", "Train Predictions", "Test Data", "Test Predictions"),
+       col = c("blue", "blue", "green", "green"),
+       pch = c(16, NA, 16, NA), lty = c(NA, 1, NA, 1), lwd = 2)
+
+```
+
+We can see that we still obtain quite good results even for the test set. Furthermore, the train and test predictions are pretty similar, as stated in the task description.
+
+---
+
+## Task 4
+
+**Task Description:** Generate new temperature data with seq(0,120). Thus, we extend the range of the explanatory variable. Use the model derived above to obtain predictions, and present those in the plot from 3. (by first extending the x-range).
+
+```{r}
+new_temperature <- seq(0, 120, length.out = 500)
+
+new_splobj <- lecturespl(x = new_temperature, nknots = 2, M = 4)
+new_basis_data <- as.data.frame(new_splobj$X)
+colnames(new_basis_data) <- paste0("H", 1:ncol(new_basis_data))
+
+new_predictions <- predict(lm_model, newdata = new_basis_data)
+
+plot(sorted_train_temp, sorted_train_response, pch = 16, col = "blue",
+     xlab = "Temperature", ylab = "Ozone", xlim = c(0, 120), 
+     main = "Training, Test Data and Extended Predictions")
+lines(sorted_train_temp, sorted_train_predictions, col = "blue", lwd = 2)
+
+points(sorted_test_temp, sorted_test_response, pch = 16, col = "green")
+lines(sorted_test_temp, sorted_test_predictions, col = "green", lwd = 2)
+
+lines(new_temperature, new_predictions, col = "red", lwd = 2)
+
+legend("topleft", legend = c("Train Data", "Train Predictions", "Test Data", "Test Predictions", "Extended Predictions"),
+       col = c("blue", "blue", "green", "green", "red"),
+       pch = c(16, NA, 16, NA, NA), lty = c(NA, 1, NA, 1, 1), lwd = 2)
+
+```
+
+Clearly, the predictions for the extended set are non-sense.
+
+---
+
+## Task 5
+
+**Task Description:** You might realize that the predictions from 4. are non-sense. The problem is that lecturespl() constructs the knots on the quantiles of the input variable. However, we should use the knots that have been constructed for the training data. Thus, modify the function accordingly, compute the predictions again, and visualize the new results.
+
+```{r def_lecturespl_fixed}
+lecturespl_fixed <- function(x, knots = NULL, M = 4) {
+  n <- length(x)
+  nknots <- if (is.null(knots)) 2 else length(knots)
+  
+  X <- matrix(NA, nrow = n, ncol = (M - 1) + nknots)
+  for (i in 1:(M - 1)) {
+    X[, i] <- x^i
+  }
+  
+  if (is.null(knots)) {
+    quant <- seq(0, 1, 1 / (nknots + 1))[c(2:(nknots + 1))]
+    knots <- quantile(x, quant)
+  }
+  
+  for (i in M:(M + nknots - 1)) {
+    X[, i] <- ifelse(x - knots[i - M + 1] < 0, 0, (x - knots[i - M + 1])^(M - 1))
+  }
+  list(X = X, knots = knots)
+}
+```
+
+We improved the function by computing the knots for the training data instead of based on the quantiles of the input variable.
+
+```{r}
+train_splobj <- lecturespl_fixed(x = temperature, knots = NULL, M = 4)
+train_basis_data <- as.data.frame(train_splobj$X)
+colnames(train_basis_data) <- paste0("H", 1:ncol(train_basis_data))
+
+lm_model <- lm(response ~ ., data = train_basis_data)
+
+
+test_splobj <- lecturespl_fixed(x = test_temperature, knots = train_splobj$knots, M = 4)
+test_basis_data <- as.data.frame(test_splobj$X)
+colnames(test_basis_data) <- paste0("H", 1:ncol(test_basis_data))
+
+new_splobj <- lecturespl_fixed(x = new_temperature, knots = train_splobj$knots, M = 4)
+new_basis_data <- as.data.frame(new_splobj$X)
+colnames(new_basis_data) <- paste0("H", 1:ncol(new_basis_data))
+
+train_predictions <- predict(lm_model)
+test_predictions <- predict(lm_model, newdata = test_basis_data)
+new_predictions <- predict(lm_model, newdata = new_basis_data)
+
+
+train_sorted_indices <- order(temperature)
+sorted_train_temp <- temperature[train_sorted_indices]
+sorted_train_response <- response[train_sorted_indices]
+sorted_train_predictions <- train_predictions[train_sorted_indices]
+
+test_sorted_indices <- order(test_temperature)
+sorted_test_temp <- test_temperature[test_sorted_indices]
+sorted_test_response <- test_response[test_sorted_indices]
+sorted_test_predictions <- test_predictions[test_sorted_indices]
+
+plot(sorted_train_temp, sorted_train_response, pch = 16, col = "blue",
+     xlab = "Temperature", ylab = "Ozone", xlim = c(0, 120),
+     main = "Training, Test Data and Improved Extended Predictions")
+lines(sorted_train_temp, sorted_train_predictions, col = "blue", lwd = 2)
+
+points(sorted_test_temp, sorted_test_response, pch = 16, col = "green")
+lines(sorted_test_temp, sorted_test_predictions, col = "green", lwd = 2)
+
+lines(new_temperature, new_predictions, col = "red", lwd = 2)
+
+legend("topleft", legend = c("Train Data", "Train Predictions", "Test Data", "Test Predictions", "Extended Predictions"),
+       col = c("blue", "blue", "green", "green", "red"),
+       pch = c(16, NA, 16, NA, NA), lty = c(NA, 1, NA, 1, 1), lwd = 2)
+
+```
+
+Clearly we obtain way better results that way.
+
+---
+
+## Task 6
+
+**Task Description:** Another problem: Your predictions for low temperatures might be negative. However, negative ozone concentrations are very rare in practice. Forcing the (smooth) predictions to be non-negative might be quite complicated. An easy way out is to use the log-transformed response inside lm(), and exp() for the resulting predictions. Thus, do the analyses again, and present all results in one plot (training and test data, and the predictions for training, test and new x data).
+
+```{r}
+log_response <- log(response)
+
+train_splobj <- lecturespl_fixed(x = temperature, knots = NULL, M = 4)
+train_basis_data <- as.data.frame(train_splobj$X)
+colnames(train_basis_data) <- paste0("H", 1:ncol(train_basis_data))
+
+lm_model <- lm(log_response ~ ., data = train_basis_data)
+
+
+test_splobj <- lecturespl_fixed(x = test_temperature, knots = train_splobj$knots, M = 4)
+test_basis_data <- as.data.frame(test_splobj$X)
+colnames(test_basis_data) <- paste0("H", 1:ncol(test_basis_data))
+
+new_splobj <- lecturespl_fixed(x = new_temperature, knots = train_splobj$knots, M = 4)
+new_basis_data <- as.data.frame(new_splobj$X)
+colnames(new_basis_data) <- paste0("H", 1:ncol(new_basis_data))
+
+train_log_predictions <- predict(lm_model)
+test_log_predictions <- predict(lm_model, newdata = test_basis_data)
+new_log_predictions <- predict(lm_model, newdata = new_basis_data)
+
+train_predictions <- exp(train_log_predictions)
+test_predictions <- exp(test_log_predictions)
+new_predictions <- exp(new_log_predictions)
+
+
+train_sorted_indices <- order(temperature)
+sorted_train_temp <- temperature[train_sorted_indices]
+sorted_train_response <- response[train_sorted_indices]
+sorted_train_predictions <- train_predictions[train_sorted_indices]
+
+test_sorted_indices <- order(test_temperature)
+sorted_test_temp <- test_temperature[test_sorted_indices]
+sorted_test_response <- test_response[test_sorted_indices]
+sorted_test_predictions <- test_predictions[test_sorted_indices]
+
+plot(sorted_train_temp, sorted_train_response, pch = 16, col = "blue",
+     xlab = "Temperature", ylab = "Ozone", xlim = c(0, 120),
+     main = "Log-Transformed Model Predictions")
+lines(sorted_train_temp, sorted_train_predictions, col = "blue", lwd = 2)
+
+points(sorted_test_temp, sorted_test_response, pch = 16, col = "green")
+lines(sorted_test_temp, sorted_test_predictions, col = "green", lwd = 2)
+
+lines(new_temperature, new_predictions, col = "red", lwd = 2)
+
+legend("topleft", legend = c("Train Data", "Train Predictions", "Test Data", "Test Predictions", "Extended Predictions"),
+       col = c("blue", "blue", "green", "green", "red"),
+       pch = c(16, NA, 16, NA, NA), lty = c(NA, 1, NA, 1, 1), lwd = 2)
+
+```
+
+By doing as described in the task description, we get rid of the negative predictions.
