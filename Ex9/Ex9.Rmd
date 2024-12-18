@@ -1,0 +1,187 @@
+---
+title: "Exercise 9: Advanced Methods for Regression and Classification"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Load Data and Initial Exploration
+
+```{r load-data}
+library(ROCit)
+library(dplyr)
+library(glmnet)
+library(mgcv)
+
+data("Diabetes", package = "ROCit")
+Diabetes$dtest <- ifelse(Diabetes$dtest == "+", 1, 0)
+str(Diabetes)
+```
+
+## Exclude Predictors and Handle Missing Data
+
+```{r preprocess-data}
+predictors <- setdiff(names(Diabetes), "dtest")
+excluded <- c("bmi", "whr")
+Diabetes <- Diabetes %>% select(-all_of(excluded))
+
+Diabetes <- na.omit(Diabetes)
+
+str(Diabetes)
+```
+
+## Split Data into Training and Test Sets
+
+```{r split-data}
+set.seed(12122371)
+train_index <- sample(seq_len(nrow(Diabetes)), size = 0.75 * nrow(Diabetes))
+train_data <- Diabetes[train_index, ]
+test_data <- Diabetes[-train_index, ]
+
+table(train_data$dtest)
+table(test_data$dtest)
+```
+
+## 1 Logistic Regression
+
+```{r logistic-regression}
+# Fit logistic regression model
+logit_model <- glm(dtest ~ ., data = train_data, family = "binomial")
+summary(logit_model)
+
+# Predict and evaluate on test data
+logit_pred <- predict(logit_model, newdata = test_data, type = "response")
+logit_class <- ifelse(logit_pred > 0.5, 1, 0)
+confusion_matrix <- table(Predicted = logit_class, Actual = test_data$dtest)
+misclassification_rate <- 1 - sum(diag(confusion_matrix)) / sum(confusion_matrix)
+
+list(confusion_matrix = confusion_matrix, misclassification_rate = misclassification_rate)
+```
+
+We actually achieve a pretty good misclassification rate. However, we receive errors that the model did not converge and that predicted probabilites of 0 and 1 ocurred. This indicates overconfidence of the model, as it might have overfitted on the training data.
+
+---
+
+## 2 Sparse Logistic Regression
+
+```{r sparse-logistic-regression}
+x <- model.matrix(dtest ~ . - 1, data = train_data)
+y <- train_data$dtest
+cv_model <- cv.glmnet(x, y, family = "binomial")
+
+cv_model$lambda.min
+
+test_x <- model.matrix(dtest ~ . - 1, data = test_data)
+sparse_pred <- predict(cv_model, newx = test_x, s = "lambda.min", type = "class")
+confusion_matrix_sparse <- table(Predicted = sparse_pred, Actual = test_data$dtest)
+misclassification_rate_sparse <- 1 - sum(diag(confusion_matrix_sparse)) / sum(confusion_matrix_sparse)
+
+list(confusion_matrix = confusion_matrix_sparse, misclassification_rate = misclassification_rate_sparse)
+```
+
+The sparse logistic regression model performs better than the logistic regression model, when predicting using the optimal lambda. Further, we do not receive the same warnings as above.
+
+---
+
+## 3 Generalized Additive Models
+
+### 3.1 - 3.4 Fit and Interpret GAM
+
+```{r fit-gam}
+gam_model <- gam(
+  dtest ~ 
+    s(chol) + 
+    s(stab.glu) + 
+    s(hdl) + 
+    s(ratio) + 
+    s(glyhb) + 
+    s(age) + 
+    s(height) +
+    s(weight) +
+    s(bp.1s) +
+    s(bp.1d) +
+    s(bp.2s) +
+    s(bp.2d) +
+    s(waist) +
+    s(hip) +
+    s(time.ppn) +
+    gender, data = train_data, family = "binomial")
+summary(gam_model)
+
+significant_vars <- summary(gam_model)$s.table
+significant_vars
+
+par(mar = c(3, 3, 2, 1))
+plot(gam_model, page = 1, shade = TRUE, shade.col = "yellow")
+```
+
+Here we constructed the GAM-model, whilst smoothing all variables but the factors. The smooth functions are rather simple in general, with mostly being almost linear or stepwise in the case of gender. Only the smooth function for "hip" looks quadratic.
+
+---
+
+### 3. 5 Evaluate GAM
+
+```{r evaluate-gam}
+gam_pred <- predict(gam_model, newdata = test_data, type = "response")
+gam_class <- ifelse(gam_pred > 0.5, 1, 0)
+confusion_matrix_gam <- table(Predicted = gam_class, Actual = test_data$dtest)
+misclassification_rate_gam <- 1 - sum(diag(confusion_matrix_gam)) / sum(confusion_matrix_gam)
+
+list(confusion_matrix = confusion_matrix_gam, misclassification_rate = misclassification_rate_gam)
+```
+
+As we can see, the misclassification rate is a bit worse when compared with the previous models.
+
+---
+
+### 3. 6 Variable Selection in GAM
+
+```{r variable-selection}
+library(gam)
+
+scope_list <- list(
+  "chol"=~1+chol+s(chol,4)+s(chol,6)+s(chol,8),
+  "hdl"=~1+hdl+s(hdl,4)+s(hdl,6)+s(hdl,8),
+  "ratio"=~1+ratio+s(ratio,4)+s(ratio,6)+s(ratio,8),
+  "glyhb"=~1+glyhb+s(glyhb,4)+s(glyhb,6)+s(glyhb,8),
+  "bp.1s"=~1+bp.1s+s(bp.1s,4)+s(bp.1s,6)+s(bp.1s,8),
+  "bp.1d"=~1+bp.1d+s(bp.1d,4)+s(bp.1d,6)+s(bp.1d,8),
+  "bp.2s"=~1+bp.2s+s(bp.2s,4)+s(bp.2s,6)+s(bp.2s,8),
+  "bp.2d"=~1+bp.2d+s(bp.2d,4)+s(bp.2d,6)+s(bp.2d,8)
+)
+
+step_gam <- step.Gam(
+  gam_model,
+  scope=scope_list
+)
+summary(step_gam)
+
+step_gam_pred <- predict(step_gam, newdata = test_data, type = "response")
+step_gam_class <- ifelse(step_gam_pred > 0.5, 1, 0)
+confusion_matrix_gam_step <- table(Predicted = step_gam_class, Actual = test_data$dtest)
+misclassification_rate_gam_step <- 1 - sum(diag(confusion_matrix_gam_step)) / sum(confusion_matrix_gam_step)
+
+list(confusion_matrix = confusion_matrix_gam_step, misclassification_rate = misclassification_rate_gam_step)
+```
+
+With the stepwise GAM model we actually receive a perfect classification and therefore a misclassification rate of zero.
+
+---
+
+### 3.7 Refitting the Model
+
+```{r}
+gam_reduced <- gam(dtest ~ time.ppn + glyhb, data = train_data, family = "binomial")
+summary(gam_reduced)
+
+gam_reduced_pred <- predict(gam_reduced, newdata = test_data, type = "response")
+gam_reduced_class <- ifelse(gam_reduced_pred > 0.5, 1, 0)
+confusion_matrix_gam_reduced <- table(Predicted = gam_reduced_class, Actual = test_data$dtest)
+misclassification_rate_gam_reduced <- 1 - sum(diag(confusion_matrix_gam_reduced)) / sum(confusion_matrix_gam_reduced)
+
+list(confusion_matrix = confusion_matrix_gam_reduced, misclassification_rate = misclassification_rate_gam_reduced)
+```
+
+After fitting a reduced model (with much less complexity), we receive the best misclassification rate that we have encountered without in the above example.
