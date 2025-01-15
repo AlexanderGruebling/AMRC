@@ -1,0 +1,114 @@
+---
+title: "Exercise 11"
+author: "Alexander Linus Grübling"
+date: "`r Sys.Date()`"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r cars}
+library(e1071)
+library(caret)
+library(ggplot2)
+library(dplyr)
+set.seed(12122371)
+```
+
+```{r pressure, echo=FALSE}
+data <- read.csv("bank.csv", header = TRUE, sep = ";")
+data$y <- as.factor(data$y)
+
+trainIndex <- createDataPartition(data$y, p = 2/3, list = FALSE, times = 1)
+trainData <- data[trainIndex, ]
+testData <- data[-trainIndex, ]
+```
+
+## a)
+
+```{r}
+svm_model <- svm(y ~ ., data = trainData)
+svm_predictions <- predict(svm_model, testData)
+
+confusion_matrix <- table(Predicted = svm_predictions, Actual = testData$y)
+print(confusion_matrix)
+
+balanced_accuracy <- function(conf_matrix) {
+  sensitivity <- conf_matrix[2, 2] / (conf_matrix[2, 2] + conf_matrix[1, 2])
+  specificity <- conf_matrix[1, 1] / (conf_matrix[1, 1] + conf_matrix[2, 1])
+  return((sensitivity + specificity) / 2)
+}
+
+bal_acc <- balanced_accuracy(confusion_matrix)
+print(paste("Balanced Accuracy:", bal_acc))
+```
+
+We can see that we achieve a high count of correct "no"-class predictions. However, correct prediction of the "yes"-class are more sparse, which is expectable since it is drastically underrepresented.
+
+## b)
+
+```{r}
+param_grid <- tune.svm(y ~ ., data = trainData,
+                       gamma = c(0.001, 0.01, 0.1, 1),
+                       cost = c(0.1, 1, 10, 100))
+
+summary(param_grid)
+plot(param_grid)
+```
+
+We can see that the best parameters that were found in the search grid are $\gamma = 0.1$ and $\text{cost}=1$. This trend is also visible in the plot.
+
+## c)
+
+```{r}
+best_model <- param_grid$best.model
+pred_best <- predict(best_model, testData)
+
+conf_matrix_best <- table(Predicted = pred_best, Actual = testData$y)
+conf_matrix_best
+
+balanced_accuracy_best <- mean(
+  sensitivity(conf_matrix_best),
+  specificity(conf_matrix_best)
+)
+balanced_accuracy_best
+```
+
+With this best model found above, we achieve a dramatically better balanced accuracy.  The weakness still lies in "yes"-instances being predicted as "no", however we have fewer such cases.
+
+## d)
+
+```{r}
+tune_result_weights <- tune(
+  svm, y ~ ., data = trainData,
+  kernel = "radial",
+  class.weights = list(no = 1, yes = 5),
+  ranges = list(cost = c(0.1, 1, 10), gamma = c(0.01, 0.1, 1))
+)
+
+print(tune_result_weights$best.parameters)
+
+best_svm_model_weights <- svm(
+  y ~ ., data = trainData, gamma = tune_result_weights$best.parameters$gamma, 
+  cost = tune_result_weights$best.parameters$cost, 
+  class.weights = tune_result_weights$best.parameters$class.weights
+)
+
+best_svm_predictions_weights <- predict(best_svm_model_weights, testData)
+
+best_confusion_matrix_weights <- table(
+  Predicted = best_svm_predictions_weights, 
+  Actual = testData$y
+)
+print(best_confusion_matrix_weights)
+
+best_bal_acc_weights <- balanced_accuracy(best_confusion_matrix_weights)
+print(
+  paste("Balanced Accuracy with Best Model and Class Weights:", 
+        best_bal_acc_weights)
+)
+```
+
+Sadly, the tunecontrol function was not working for me. Doing it the way I have done it above sadly results in a way worse balanced accuracy.
